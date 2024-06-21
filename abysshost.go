@@ -1,6 +1,7 @@
 package abyssgo
 
 import (
+	"abyss/and"
 	"context"
 )
 
@@ -9,7 +10,7 @@ type IAbyssHost interface {
 	TerminateNetworkService()
 
 	GetIRemoteResourceProvider() IRemoteResourceProvider
-	GetINeighborDiscoveryHandler() INeighborDiscoveryHandler
+	GetINeighborDiscoveryHandler() and.INeighborDiscoveryHandler
 	GetIResourceAccessAuthorizer() IResourceAccessAuthorizer
 	GetIRealtimeResourceHandler() IRealtimeResourceHandler
 }

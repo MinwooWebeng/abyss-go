@@ -1,12 +1,15 @@
 package abyssgo
 
-import "context"
+import (
+	"abyss/and"
+	"context"
+)
 
 type AbyssHost struct {
 	credential *AbyssHostCredential
 
 	remote_resource_provider   IRemoteResourceProvider
-	neighbor_discovery_handler INeighborDiscoveryHandler
+	neighbor_discovery_handler *and.NeighborDiscoveryHandler
 	resource_access_authorizer IResourceAccessAuthorizer
 	realtime_resource_handler  IRealtimeResourceHandler
 }
@@ -15,13 +18,12 @@ func (host AbyssHost) RunNetworkService(ctx context.Context) {
 
 }
 func (host AbyssHost) TerminateNetworkService() {
-
 }
 
 func (host AbyssHost) GetIRemoteResourceProvider() IRemoteResourceProvider {
 	return host.remote_resource_provider
 }
-func (host AbyssHost) GetINeighborDiscoveryHandler() INeighborDiscoveryHandler {
+func (host AbyssHost) GetINeighborDiscoveryHandler() and.INeighborDiscoveryHandler {
 	return host.neighbor_discovery_handler
 }
 func (host AbyssHost) GetIResourceAccessAuthorizer() IResourceAccessAuthorizer {

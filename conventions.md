@@ -27,7 +27,7 @@ implementation(without seperated interface file): name
 
 1) all interface must be copyable, and it must not copy the implementation.
 2) always copy pass interface
-3) therefore, interface-implementing structs can only have reference type members.
+3) all interface is the pointer of a struct.
 4) never define methods for non-interface-implementing structs -> choose between [method-only interface(+implementation struct) | variable-only struct]
 
 * interface-implementing structs for polymorphism of simple types are exceptions.
@@ -43,5 +43,7 @@ must return (result, error)
 
 5. Construction
 
-1) All interface implementing structs must be constructed with Make___() functions.
-These functions return the struct, not interface.
+1) All interface implementing structs must be constructed with New___() functions.
+These functions return the struct pointer, not interface.
+
+2) Optionally, struct may have Init() method, which is expected to be called by composition struct construction, only once.
