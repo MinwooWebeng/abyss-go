@@ -1,7 +1,5 @@
 package abyssgo
 
-import "abyss/acrypt"
-
 type AbyssHostCredential struct {
 	name             string
 	master_key_pkcs8 []byte

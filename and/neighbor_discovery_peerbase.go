@@ -18,11 +18,10 @@ type INeighborDiscoveryPeerBase interface {
 	SendJDN(path string, status int, message string)        //this also includes redirection
 	SendJNI(world INeighborDiscoveryWorldBase, member INeighborDiscoveryPeerBase)
 	SendMEM(world INeighborDiscoveryWorldBase)
-	SendSNB(world INeighborDiscoveryWorldBase, members []INeighborDiscoveryIdentityBase)
-	SendCRR(world INeighborDiscoveryWorldBase, member INeighborDiscoveryIdentityBase)
+	SendSNB(world INeighborDiscoveryWorldBase, members_hash []string)
+	SendCRR(world INeighborDiscoveryWorldBase, member_hash string)
 	SendRST(world_uuid string)
 
-	GetAddress() string
-	GetIdentity() INeighborDiscoveryIdentityBase
-	//GetJsonString() string
+	GetAddress() any
+	GetHash() string
 }

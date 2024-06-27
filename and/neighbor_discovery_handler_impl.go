@@ -33,9 +33,9 @@ func NewNeighborDiscoverySession() *NeighborDiscoverySession {
 type NeighborDiscoveryHandler struct {
 	event_listener   chan<- NeighborDiscoveryEvent
 	error_listener   chan<- error
-	connect_callback func(address string, identity INeighborDiscoveryIdentityBase)
+	connect_callback func(address any)
 
-	local_identity INeighborDiscoveryIdentityBase
+	local_hash string
 
 	peers    map[string]INeighborDiscoveryPeerBase  //identity hash > peer - all connected peers
 	worlds   map[string]INeighborDiscoveryWorldBase //localpath > world - same world for different localpath is not allowed.
@@ -47,9 +47,9 @@ type NeighborDiscoveryHandler struct {
 	join_local_paths map[string]bool              //occupied local paths
 }
 
-func NewNeighborDiscoveryHandler(local_identity INeighborDiscoveryIdentityBase) *NeighborDiscoveryHandler {
+func NewNeighborDiscoveryHandler(local_hash string) *NeighborDiscoveryHandler {
 	result := new(NeighborDiscoveryHandler)
-	result.local_identity = local_identity
+	result.local_hash = local_hash
 	result.peers = make(map[string]INeighborDiscoveryPeerBase)
 	result.worlds = make(map[string]INeighborDiscoveryWorldBase)
 	result.sessions = make(map[string]*NeighborDiscoverySession)
@@ -65,7 +65,7 @@ func (h *NeighborDiscoveryHandler) ReserveEventListener(listener chan<- Neighbor
 func (h *NeighborDiscoveryHandler) ReserveErrorListener(listener chan<- error) {
 	h.error_listener = listener
 }
-func (h *NeighborDiscoveryHandler) ReserveConnectCallback(connect_callback func(address string, identity INeighborDiscoveryIdentityBase)) {
+func (h *NeighborDiscoveryHandler) ReserveConnectCallback(connect_callback func(address any)) {
 	h.connect_callback = connect_callback
 }
 
@@ -161,14 +161,14 @@ func (h *NeighborDiscoveryHandler) GetWorld(localpath string) (INeighborDiscover
 
 func (h *NeighborDiscoveryHandler) Connected(peer INeighborDiscoveryPeerBase) {
 	//add in peers
-	peer_id_hash := peer.GetIdentity().Hash()
+	peer_id_hash := peer.GetHash()
 	_, ok := h.peers[peer_id_hash]
 	if ok {
 		//error: duplicate connection
-		h.error_listener <- errors.New("duplicate connection: " + peer.GetIdentity().Hash())
+		h.error_listener <- errors.New("duplicate connection: " + peer.GetHash())
 		return
 	}
-	if peer_id_hash == h.local_identity.Hash() {
+	if peer_id_hash == h.local_hash {
 		h.error_listener <- errors.New("self connection")
 		return
 	}
@@ -182,7 +182,7 @@ func (h *NeighborDiscoveryHandler) Connected(peer INeighborDiscoveryPeerBase) {
 			session.members[peer_id_hash] = peer
 			session.snb_targets[peer_id_hash] = 3
 			peer.SendMEM(session.world)
-			h.event_listener <- NeighborDiscoveryEvent{PeerJoin, "", peer.GetIdentity(), peer, "", session.world, 0, ""}
+			h.event_listener <- NeighborDiscoveryEvent{PeerJoin, "", peer.GetHash(), peer, "", session.world, 0, ""}
 		}
 	}
 
@@ -194,40 +194,38 @@ func (h *NeighborDiscoveryHandler) Connected(peer INeighborDiscoveryPeerBase) {
 		}
 	}
 }
-func (h *NeighborDiscoveryHandler) Disconnected(peer_id INeighborDiscoveryIdentityBase) {
-	peer_id_hash := peer_id.Hash()
-
+func (h *NeighborDiscoveryHandler) Disconnected(peer_hash string) {
 	//remove from peers
-	delete(h.peers, peer_id_hash)
+	delete(h.peers, peer_hash)
 
 	//look for all sessions, remove
 	for _, session := range h.sessions {
-		peer, ok := session.members[peer_id_hash]
+		peer, ok := session.members[peer_hash]
 		if ok {
-			delete(session.members, peer_id_hash)
-			h.event_listener <- NeighborDiscoveryEvent{PeerLeave, "", peer_id, peer, "", session.world, 0, ""}
+			delete(session.members, peer_hash)
+			h.event_listener <- NeighborDiscoveryEvent{PeerLeave, "", peer_hash, peer, "", session.world, 0, ""}
 		}
 
-		_, ok = session.CC_MR[peer_id_hash]
+		_, ok = session.CC_MR[peer_hash]
 		if ok {
-			delete(session.CC_MR, peer_id_hash)
+			delete(session.CC_MR, peer_hash)
 		}
 	}
 
 	//candidate sessions, remove silently.
 	for _, session := range h.candidate_sessions {
-		_, ok := session.members[peer_id_hash]
+		_, ok := session.members[peer_hash]
 		if ok {
-			delete(session.members, peer_id_hash)
+			delete(session.members, peer_hash)
 		}
 	}
 
 	//delete from join targets
-	join_target, ok := h.join_targets[peer_id_hash]
+	join_target, ok := h.join_targets[peer_hash]
 	if ok {
-		delete(h.join_targets, peer_id_hash)
+		delete(h.join_targets, peer_hash)
 		for path, localpath := range join_target {
-			h.event_listener <- NeighborDiscoveryEvent{JoinExpired, localpath, peer_id, nil, path, nil, 0, ""}
+			h.event_listener <- NeighborDiscoveryEvent{JoinExpired, localpath, peer_hash, nil, path, nil, 0, ""}
 			delete(h.join_local_paths, localpath)
 		}
 
@@ -244,18 +242,18 @@ func (h *NeighborDiscoveryHandler) Disconnected(peer_id INeighborDiscoveryIdenti
 }
 
 // path collision not checked
-func (h *NeighborDiscoveryHandler) _AppendJoinInfo(localpath string, peer_id INeighborDiscoveryIdentityBase, path string) {
-	join_paths, ok := h.join_targets[peer_id.Hash()]
+func (h *NeighborDiscoveryHandler) _AppendJoinInfo(localpath string, peer_hash string, path string) {
+	join_paths, ok := h.join_targets[peer_hash]
 	if !ok {
 		//there is no ongoing join process
 		join_paths = make(map[string]string)
-		h.join_targets[peer_id.Hash()] = join_paths
+		h.join_targets[peer_hash] = join_paths
 	}
 
 	_, ok = join_paths[path]
 	if ok {
-		h.event_listener <- NeighborDiscoveryEvent{JoinExpired, localpath, peer_id, nil, path, nil, 0, ""}
-		h.error_listener <- errors.New("duplicate join call: " + peer_id.Hash() + path)
+		h.event_listener <- NeighborDiscoveryEvent{JoinExpired, localpath, peer_hash, nil, path, nil, 0, ""}
+		h.error_listener <- errors.New("duplicate join call: " + peer_hash + path)
 		return
 	}
 	join_paths[path] = localpath
@@ -263,36 +261,35 @@ func (h *NeighborDiscoveryHandler) _AppendJoinInfo(localpath string, peer_id INe
 }
 func (h *NeighborDiscoveryHandler) JoinConnected(localpath string, peer INeighborDiscoveryPeerBase, path string) {
 	if h.IsLocalPathOccupied(localpath) {
-		h.event_listener <- NeighborDiscoveryEvent{JoinExpired, localpath, peer.GetIdentity(), peer, path, nil, 0, ""}
+		h.event_listener <- NeighborDiscoveryEvent{JoinExpired, localpath, peer.GetHash(), peer, path, nil, 0, ""}
 		h.error_listener <- errors.New("local path collision in JoinAny: " + localpath)
 		return
 	}
 
-	_, ok := h.peers[peer.GetIdentity().Hash()]
+	_, ok := h.peers[peer.GetHash()]
 	if !ok {
 		h.error_listener <- errors.New("tried to join hanging peer")
 		return
 	}
 	peer.SendJN(path)
-	h._AppendJoinInfo(localpath, peer.GetIdentity(), path)
+	h._AppendJoinInfo(localpath, peer.GetHash(), path)
 }
-func (h *NeighborDiscoveryHandler) JoinAny(localpath string, address string, peer_id INeighborDiscoveryIdentityBase, path string) {
+func (h *NeighborDiscoveryHandler) JoinAny(localpath string, address any, peer_hash string, path string) {
 	if h.IsLocalPathOccupied(localpath) {
-		h.event_listener <- NeighborDiscoveryEvent{JoinExpired, localpath, peer_id, nil, path, nil, 0, ""}
+		h.event_listener <- NeighborDiscoveryEvent{JoinExpired, localpath, peer_hash, nil, path, nil, 0, ""}
 		h.error_listener <- errors.New("local path collision in JoinAny: " + localpath)
 		return
 	}
 
-	peer_id_hash := peer_id.Hash()
-	peer, ok := h.peers[peer_id_hash]
+	peer, ok := h.peers[peer_hash]
 	if ok {
 		peer.SendJN(path)
-		h._AppendJoinInfo(localpath, peer_id, path)
+		h._AppendJoinInfo(localpath, peer_hash, path)
 		return
 	}
 
-	h.connect_callback(address, peer_id)
-	h._AppendJoinInfo(localpath, peer_id, path)
+	h.connect_callback(address)
+	h._AppendJoinInfo(localpath, peer_hash, path)
 }
 
 func (h *NeighborDiscoveryHandler) OnJN(peer INeighborDiscoveryPeerBase, path string) {
@@ -309,7 +306,7 @@ func (h *NeighborDiscoveryHandler) OnJN(peer INeighborDiscoveryPeerBase, path st
 		return
 	}
 	//duplicate join check
-	_, ok = session.members[peer.GetIdentity().Hash()]
+	_, ok = session.members[peer.GetHash()]
 	if ok {
 		peer.SendJDN(path, 409, "Conflict")
 		return
@@ -319,14 +316,14 @@ func (h *NeighborDiscoveryHandler) OnJN(peer INeighborDiscoveryPeerBase, path st
 		member.SendJNI(world, peer)
 	}
 
-	session.members[peer.GetIdentity().Hash()] = peer
-	session.snb_targets[peer.GetIdentity().Hash()] = 3
+	session.members[peer.GetHash()] = peer
+	session.snb_targets[peer.GetHash()] = 3
 	peer.SendJOK(path, world)
-	h.event_listener <- NeighborDiscoveryEvent{PeerJoin, "", peer.GetIdentity(), peer, "", session.world, 0, ""}
+	h.event_listener <- NeighborDiscoveryEvent{PeerJoin, "", peer.GetHash(), peer, "", session.world, 0, ""}
 }
 func (h *NeighborDiscoveryHandler) OnJOK(peer INeighborDiscoveryPeerBase, path string, world INeighborDiscoveryWorldBase) {
 	//check for ongoing join processes
-	join_paths, ok := h.join_targets[peer.GetIdentity().Hash()]
+	join_paths, ok := h.join_targets[peer.GetHash()]
 	if !ok {
 		peer.SendRST(world.GetUUID())
 		return
@@ -344,15 +341,15 @@ func (h *NeighborDiscoveryHandler) OnJOK(peer INeighborDiscoveryPeerBase, path s
 		return
 	}
 
-	h.event_listener <- NeighborDiscoveryEvent{JoinSuccess, localpath, peer.GetIdentity(), peer, path, world, 200, "OK"}
-	session.members[peer.GetIdentity().Hash()] = peer
+	h.event_listener <- NeighborDiscoveryEvent{JoinSuccess, localpath, peer.GetHash(), peer, path, world, 200, "OK"}
+	session.members[peer.GetHash()] = peer
 	for _, peer := range session.members {
-		h.event_listener <- NeighborDiscoveryEvent{PeerJoin, "", peer.GetIdentity(), peer, "", world, 0, ""}
+		h.event_listener <- NeighborDiscoveryEvent{PeerJoin, "", peer.GetHash(), peer, "", world, 0, ""}
 	}
 
 	delete(join_paths, path)
 	if len(join_paths) == 0 {
-		delete(h.join_targets, peer.GetIdentity().Hash())
+		delete(h.join_targets, peer.GetHash())
 	}
 	delete(h.join_local_paths, localpath)
 	if len(h.join_local_paths) == 0 && len(h.candidate_sessions) != 0 {
@@ -366,7 +363,7 @@ func (h *NeighborDiscoveryHandler) OnJOK(peer INeighborDiscoveryPeerBase, path s
 }
 func (h *NeighborDiscoveryHandler) OnJDN(peer INeighborDiscoveryPeerBase, path string, status int, message string) {
 	//check for ongoing join processes
-	join_paths, ok := h.join_targets[peer.GetIdentity().Hash()]
+	join_paths, ok := h.join_targets[peer.GetHash()]
 	if !ok {
 		return
 	}
@@ -376,11 +373,11 @@ func (h *NeighborDiscoveryHandler) OnJDN(peer INeighborDiscoveryPeerBase, path s
 		return
 	}
 
-	h.event_listener <- NeighborDiscoveryEvent{JoinDenied, localpath, peer.GetIdentity(), peer, path, nil, status, message}
+	h.event_listener <- NeighborDiscoveryEvent{JoinDenied, localpath, peer.GetHash(), peer, path, nil, status, message}
 
 	delete(join_paths, path)
 	if len(join_paths) == 0 {
-		delete(h.join_targets, peer.GetIdentity().Hash())
+		delete(h.join_targets, peer.GetHash())
 	}
 	delete(h.join_local_paths, localpath)
 	if len(h.join_local_paths) == 0 && len(h.candidate_sessions) != 0 {
@@ -400,7 +397,7 @@ func (h *NeighborDiscoveryHandler) ValidateSessionMember(peer INeighborDiscovery
 		//check if target session is candidate session
 		candidate_session, ok := h.candidate_sessions[world_uuid]
 		if ok {
-			_, ok = candidate_session.members[peer.GetIdentity().Hash()]
+			_, ok = candidate_session.members[peer.GetHash()]
 			if ok { //premature JNI. there is little to no gain on handling this, though this may be a valid JNI.
 				return nil, candidate_session
 			}
@@ -411,13 +408,13 @@ func (h *NeighborDiscoveryHandler) ValidateSessionMember(peer INeighborDiscovery
 	}
 
 	//check if the sender is member of target session.
-	_, ok = session.members[peer.GetIdentity().Hash()]
+	_, ok = session.members[peer.GetHash()]
 	if !ok {
 		return nil, nil
 	}
 	return session, nil
 }
-func (h *NeighborDiscoveryHandler) OnJNI(peer INeighborDiscoveryPeerBase, world_uuid string, address string, joiner_id INeighborDiscoveryIdentityBase) {
+func (h *NeighborDiscoveryHandler) OnJNI(peer INeighborDiscoveryPeerBase, world_uuid string, address any, joiner_hash string) {
 	session, candidate := h.ValidateSessionMember(peer, world_uuid)
 	if session == nil && candidate == nil {
 		peer.SendRST(world_uuid)
@@ -428,30 +425,30 @@ func (h *NeighborDiscoveryHandler) OnJNI(peer INeighborDiscoveryPeerBase, world_
 	}
 
 	//check if joiner is connected
-	joiner, ok := h.peers[joiner_id.Hash()]
+	joiner, ok := h.peers[joiner_hash]
 	if ok {
 		//check if joiner is already member.
-		_, ok = session.members[joiner_id.Hash()]
+		_, ok = session.members[joiner_hash]
 		if ok { //already member
 			return //ignore duplicate JNI
 		}
 
 		//already connected, not a member
 		joiner.SendMEM(session.world)
-		session.members[joiner_id.Hash()] = joiner
-		session.snb_targets[joiner_id.Hash()] = 3
+		session.members[joiner_hash] = joiner
+		session.snb_targets[joiner_hash] = 3
 		return
 	}
 
 	//check if joiner is CC_MR
-	_, ok = session.CC_MR[joiner_id.Hash()]
+	_, ok = session.CC_MR[joiner_hash]
 	if ok {
 		return //duplicate JNI. all peers in CC_MR is already dialing
 	}
 
 	//not connected, not CC_MR
-	h.connect_callback(address, joiner_id)
-	session.CC_MR[joiner_id.Hash()] = joiner
+	h.connect_callback(address)
+	session.CC_MR[joiner_hash] = joiner
 }
 func (h *NeighborDiscoveryHandler) OnMEM(peer INeighborDiscoveryPeerBase, world_uuid string) {
 	session, ok := h.sessions[world_uuid]
@@ -467,19 +464,19 @@ func (h *NeighborDiscoveryHandler) OnMEM(peer INeighborDiscoveryPeerBase, world_
 			candidate = NewCandidateSession()
 			h.candidate_sessions[world_uuid] = candidate
 		}
-		candidate.members[peer.GetIdentity().Hash()] = peer
+		candidate.members[peer.GetHash()] = peer
 		return
 	}
-	_, ok = session.members[peer.GetIdentity().Hash()]
+	_, ok = session.members[peer.GetHash()]
 	if ok {
 		return
 	}
 
-	session.members[peer.GetIdentity().Hash()] = peer
-	session.snb_targets[peer.GetIdentity().Hash()] = 3
-	h.event_listener <- NeighborDiscoveryEvent{PeerJoin, "", peer.GetIdentity(), peer, "", session.world, 0, ""}
+	session.members[peer.GetHash()] = peer
+	session.snb_targets[peer.GetHash()] = 3
+	h.event_listener <- NeighborDiscoveryEvent{PeerJoin, "", peer.GetHash(), peer, "", session.world, 0, ""}
 }
-func (h *NeighborDiscoveryHandler) OnSNB(peer INeighborDiscoveryPeerBase, world_uuid string, members []INeighborDiscoveryIdentityBase) {
+func (h *NeighborDiscoveryHandler) OnSNB(peer INeighborDiscoveryPeerBase, world_uuid string, members_hash []string) {
 	session, candidate := h.ValidateSessionMember(peer, world_uuid)
 	if session == nil && candidate == nil {
 		peer.SendRST(world_uuid)
@@ -490,25 +487,25 @@ func (h *NeighborDiscoveryHandler) OnSNB(peer INeighborDiscoveryPeerBase, world_
 	}
 
 	//now, peer is valid, handle SNB.
-	for _, member_id := range members {
-		cnt, ok := session.snb_targets[member_id.Hash()]
+	for _, member_hash := range members_hash {
+		cnt, ok := session.snb_targets[member_hash]
 		if ok {
 			if cnt == 1 {
-				delete(session.snb_targets, member_id.Hash())
+				delete(session.snb_targets, member_hash)
 			} else {
-				session.snb_targets[member_id.Hash()] = cnt - 1
+				session.snb_targets[member_hash] = cnt - 1
 			}
 			continue
 		}
 
 		//the member_id was not in snb_targets. check if it is also missing in members.
-		_, ok = session.members[member_id.Hash()]
+		_, ok = session.members[member_hash]
 		if !ok {
-			peer.SendCRR(session.world, member_id)
+			peer.SendCRR(session.world, member_hash)
 		}
 	}
 }
-func (h *NeighborDiscoveryHandler) OnCRR(peer INeighborDiscoveryPeerBase, world_uuid string, missing_member INeighborDiscoveryIdentityBase) {
+func (h *NeighborDiscoveryHandler) OnCRR(peer INeighborDiscoveryPeerBase, world_uuid string, missing_member_hash string) {
 	session, candidate := h.ValidateSessionMember(peer, world_uuid)
 	if session == nil && candidate == nil {
 		peer.SendRST(world_uuid)
@@ -518,7 +515,7 @@ func (h *NeighborDiscoveryHandler) OnCRR(peer INeighborDiscoveryPeerBase, world_
 		return
 	}
 
-	member, ok := session.members[missing_member.Hash()]
+	member, ok := session.members[missing_member_hash]
 	if !ok {
 		return
 	}
@@ -528,10 +525,10 @@ func (h *NeighborDiscoveryHandler) OnCRR(peer INeighborDiscoveryPeerBase, world_
 func (h *NeighborDiscoveryHandler) OnRST(peer INeighborDiscoveryPeerBase, world_uuid string) {
 	session, candidate := h.ValidateSessionMember(peer, world_uuid)
 	if session != nil {
-		delete(session.members, peer.GetIdentity().Hash())
-		delete(session.snb_targets, peer.GetIdentity().Hash())
+		delete(session.members, peer.GetHash())
+		delete(session.snb_targets, peer.GetHash())
 	}
 	if candidate != nil {
-		delete(candidate.members, peer.GetIdentity().Hash())
+		delete(candidate.members, peer.GetHash())
 	}
 }
