@@ -18,13 +18,13 @@ func (w *NeighborDiscoveryTestWorld) GetUUID() string {
 func (w *NeighborDiscoveryTestWorld) GetUUIDBytes() []byte {
 	return []byte(w.GetUUID())
 }
-func (w *NeighborDiscoveryTestWorld) GetJsonString() string {
-	return "{UUID:\"" + w.UUID + "\"}"
+func (w *NeighborDiscoveryTestWorld) GetJsonBytes() []byte {
+	return []byte("{UUID:\"" + w.UUID + "\"}")
 }
 
 var world_uuid_counter int = 3001
 
-func NewWorld() *NeighborDiscoveryTestWorld {
+func NewWorld_Testimpl() *NeighborDiscoveryTestWorld {
 	result := new(NeighborDiscoveryTestWorld)
 	result.UUID = "world-uuid-" + strconv.Itoa(world_uuid_counter)
 	world_uuid_counter++
@@ -57,11 +57,11 @@ func (p *NeighborDiscoveryTestPeer) SendJN(path string) {
 	p.Log("AHMP/1.0 JN " + path)
 }
 func (p *NeighborDiscoveryTestPeer) SendJOK(path string, w INeighborDiscoveryWorldBase) {
-	var world = w.GetJsonString()
+	var world = w.GetJsonBytes()
 	p.Log("AHMP/1.0 JOK " + path + " 200 OK\n" +
 		"Content-Length: " + strconv.Itoa(len(world)) + "\n" +
 		"\n" +
-		world)
+		string(world))
 }
 func (p *NeighborDiscoveryTestPeer) SendJDN(path string, status int, msg string) {
 	p.Log("AHMP/1.0 JDN " + path + " " + strconv.Itoa(status) + " " + msg)
@@ -145,7 +145,7 @@ func NewLocalHost() *LocalHost {
 func TestOpenWorld(t *testing.T) {
 	local_host := NewLocalHost()
 	ndh := local_host.ndh
-	if !ndh.OpenWorld("/", NewWorld()) {
+	if !ndh.OpenWorld("/", NewWorld_Testimpl()) {
 		t.Fail()
 	}
 	ndh.CloseWorld("/")
@@ -159,7 +159,7 @@ func TestJoin1(t *testing.T) {
 	ndh := local_host.ndh
 
 	join_target := NewNeighborDiscoveryTestPeer()
-	join_world := NewWorld()
+	join_world := NewWorld_Testimpl()
 	ndh.JoinAny("/", "*", join_target.GetHash(), "/target")
 	ndh.Connected(join_target)
 	ndh.OnJOK(join_target, "/target", join_world)
@@ -178,7 +178,7 @@ func TestJoin2(t *testing.T) {
 	ndh := local_host.ndh
 
 	join_target := NewNeighborDiscoveryTestPeer()
-	join_world := NewWorld()
+	join_world := NewWorld_Testimpl()
 	ndh.Connected(join_target)
 	ndh.JoinConnected("/", join_target, "/target")
 	ndh.OnJOK(join_target, "/target", join_world)
@@ -197,7 +197,7 @@ func TestJoin3(t *testing.T) {
 	ndh := local_host.ndh
 
 	join_target := NewNeighborDiscoveryTestPeer()
-	join_world := NewWorld()
+	join_world := NewWorld_Testimpl()
 	ndh.Connected(join_target)
 	ndh.JoinAny("/", "*", join_target.GetHash(), "/target")
 	ndh.OnJOK(join_target, "/target", join_world)
@@ -216,7 +216,7 @@ func TestMEM(t *testing.T) {
 	ndh := local_host.ndh
 
 	peer_target := NewNeighborDiscoveryTestPeer()
-	world := NewWorld()
+	world := NewWorld_Testimpl()
 
 	if !ndh.OpenWorld("/default", world) {
 		t.Error("failed to open world")
@@ -239,7 +239,7 @@ func TestPrematureJoin(t *testing.T) {
 	ndh := local_host.ndh
 
 	peer_target := NewNeighborDiscoveryTestPeer()
-	world := NewWorld()
+	world := NewWorld_Testimpl()
 
 	peer_third := NewNeighborDiscoveryTestPeer()
 
@@ -266,7 +266,7 @@ func TestJoinFail1(t *testing.T) {
 	ndh := local_host.ndh
 
 	peer_target := NewNeighborDiscoveryTestPeer()
-	world := NewWorld()
+	world := NewWorld_Testimpl()
 
 	peer_third := NewNeighborDiscoveryTestPeer()
 
@@ -297,7 +297,7 @@ func TestJoinFail2(t *testing.T) {
 	ndh := local_host.ndh
 
 	peer_target := NewNeighborDiscoveryTestPeer()
-	world := NewWorld()
+	world := NewWorld_Testimpl()
 
 	peer_third := NewNeighborDiscoveryTestPeer()
 
@@ -327,7 +327,7 @@ func TestExpiredJoin1(t *testing.T) {
 	ndh := local_host.ndh
 
 	peer_target := NewNeighborDiscoveryTestPeer()
-	world := NewWorld()
+	world := NewWorld_Testimpl()
 
 	peer_third := NewNeighborDiscoveryTestPeer()
 
@@ -360,7 +360,7 @@ func TestExpiredJoin2(t *testing.T) {
 	ndh := local_host.ndh
 
 	peer_target := NewNeighborDiscoveryTestPeer()
-	world := NewWorld()
+	world := NewWorld_Testimpl()
 
 	peer_third := NewNeighborDiscoveryTestPeer()
 
@@ -394,7 +394,7 @@ func TestAccept(t *testing.T) {
 	ndh := local_host.ndh
 
 	peer_target := NewNeighborDiscoveryTestPeer()
-	world := NewWorld()
+	world := NewWorld_Testimpl()
 
 	ndh.OpenWorld("/home", world)
 

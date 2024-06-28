@@ -18,65 +18,58 @@ type Peer struct {
 	primary_session   *Session
 	secondary_session *Session
 	AhmpCh            chan AHMPReadRes
-	open_session_n    atomic.Int32
+	is_ok             atomic.Bool //TODO: change into bool; on first toggle, raise error; peer close is called from networker
+}
+
+// only this can be called externally for peer close. never call Close() directly.
+func (p *Peer) Signal(err error) {
+	if p.is_ok.CompareAndSwap(true, false) {
+		p.AhmpCh <- AHMPReadRes{p, AHMPExit{err}, nil}
+	}
+}
+
+func (p *Peer) ServeSessionLoop(session *Session) {
+	for {
+		msg, err := session.ahmp_parser.Read(session.ahmp_stream)
+		if err != nil {
+			_, ok := err.(*AHMPError)
+			if !ok {
+				p.Signal(err)
+				return //should be channel/connection closed (may need revision)
+			}
+			p.AhmpCh <- AHMPReadRes{p, msg, err}
+		}
+	}
 }
 
 func NewPeer(session *Session, ahmp_ch chan AHMPReadRes) *Peer {
 	result := new(Peer)
 	result.primary_session = session
 	result.AhmpCh = ahmp_ch
-	go func() {
-		result.open_session_n.Add(1)
-		for {
-			msg, err := result.primary_session.ahmp_parser.Read(result.primary_session.ahmp_stream)
-			if err != nil {
-				_, ok := err.(*AHMPError)
-				if !ok {
-					if result.open_session_n.Add(-1) == 0 {
-						result.AhmpCh <- AHMPReadRes{result, AHMPDisconnect{err}, nil}
-					}
-					return //should be channel/connection closed (may need revision)
-				}
-				result.AhmpCh <- AHMPReadRes{result, msg, err}
-			}
-		}
-	}()
+	result.is_ok.Store(true)
+
+	go result.ServeSessionLoop(session)
 
 	return result
 }
 
-func (p *Peer) TryAddSession(Session *Session) bool {
-	if p.primary_session.address != Session.address {
+func (p *Peer) TryAddSession(session *Session) bool {
+	if p.primary_session.address != session.address {
 		return false
 	}
 	if p.secondary_session != nil {
 		return false
 	}
-	p.secondary_session = Session
-	go func() {
-		p.open_session_n.Add(1)
-		for {
-			msg, err := p.secondary_session.ahmp_parser.Read(p.secondary_session.ahmp_stream)
-			if err != nil {
-				_, ok := err.(*AHMPError)
-				if !ok {
-					if p.open_session_n.Add(-1) == 0 {
-						if p.open_session_n.Add(-1) == 0 {
-							p.AhmpCh <- AHMPReadRes{p, AHMPDisconnect{err}, nil}
-						}
-					}
-					return //should be channel/connection closed (may need revision)
-				}
-				p.AhmpCh <- AHMPReadRes{p, msg, err}
-			}
-		}
-	}()
+	p.secondary_session = session
+
+	go p.ServeSessionLoop(session)
+
 	return true
 }
 func (p *Peer) Close() {
 	p.primary_session.connection.CloseWithError(0, "connection close")
 	if p.secondary_session != nil {
-		p.primary_session.connection.CloseWithError(0, "connection close")
+		p.secondary_session.connection.CloseWithError(0, "connection close")
 	}
 }
 
@@ -84,10 +77,10 @@ func (p *Peer) SendJN(path string) {
 	p.primary_session.ahmp_stream.Write([]byte("AHMP/1.0 JN " + path + "\n\n"))
 }
 func (p *Peer) SendJOK(path string, world and.INeighborDiscoveryWorldBase) {
-	body := world.GetJsonString()
+	body := world.GetJsonBytes()
 	p.primary_session.ahmp_stream.Write([]byte("AHMP/1.0 JOK " + path + "\n"))
 	p.primary_session.ahmp_stream.Write([]byte("Content-Length: " + strconv.Itoa(len(body)) + "\n\n"))
-	p.primary_session.ahmp_stream.Write([]byte(body))
+	p.primary_session.ahmp_stream.Write(body)
 }
 func (p *Peer) SendJDN(path string, status int, message string) {
 	p.primary_session.ahmp_stream.Write([]byte("AHMP/1.0 JDN " + path + " " + strconv.Itoa(status) + " " + message + "\n\n"))

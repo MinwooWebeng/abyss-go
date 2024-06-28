@@ -1,7 +1,7 @@
 package and
 
 type INeighborDiscoveryWorldBase interface {
-	GetJsonString() string
+	GetJsonBytes() []byte
 	GetUUID() string
 	GetUUIDBytes() []byte
 }

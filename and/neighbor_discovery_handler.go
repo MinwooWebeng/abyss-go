@@ -48,6 +48,7 @@ type INeighborDiscoveryHandler interface {
 	OnSNB(peer INeighborDiscoveryPeerBase, world_uuid string, members_hash []string)
 	OnCRR(peer INeighborDiscoveryPeerBase, world_uuid string, missing_member_hash string)
 	OnRST(peer INeighborDiscoveryPeerBase, world_uuid string)
+	OnWorldErr(peer INeighborDiscoveryPeerBase, world_uuid string)
 }
 
 // for testing purpose

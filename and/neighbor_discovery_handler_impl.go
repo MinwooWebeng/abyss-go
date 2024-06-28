@@ -532,3 +532,7 @@ func (h *NeighborDiscoveryHandler) OnRST(peer INeighborDiscoveryPeerBase, world_
 		delete(candidate.members, peer.GetHash())
 	}
 }
+func (h *NeighborDiscoveryHandler) OnWorldErr(peer INeighborDiscoveryPeerBase, world_uuid string) {
+	peer.SendRST(world_uuid)
+	h.OnRST(peer, world_uuid)
+}

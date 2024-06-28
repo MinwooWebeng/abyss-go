@@ -22,7 +22,7 @@ func NewAHMPError(msg string) *AHMPError {
 	return result
 }
 
-type AHMPDisconnect struct {
+type AHMPExit struct {
 	exitcode error
 }
 

@@ -5,6 +5,7 @@ import (
 	"abyss/atype"
 	"context"
 	"errors"
+	"strings"
 	"sync"
 )
 
@@ -34,8 +35,9 @@ type Networker struct {
 	fin_wg sync.WaitGroup
 
 	//access from external thread
-	callq  chan PeerQueryCall
-	ErrLog chan error
+	callq      chan PeerQueryCall
+	NdhEventCh chan and.NeighborDiscoveryEvent
+	ErrLog     chan error
 }
 
 func (n *Networker) ErrRaise(err error) {
@@ -58,11 +60,16 @@ func CreateNetworker(pubkey_pem []byte, name string) (*Networker, error) {
 	}
 
 	result.ndh = and.NewNeighborDiscoveryHandler(id.Hash)
+
 	result.peers = make(map[string]*Peer)
 	result.ongoing_dial = make(map[string][]chan PeerQueryReturn)
 
 	result.callq = make(chan PeerQueryCall, 32)
+	result.NdhEventCh = make(chan and.NeighborDiscoveryEvent, 64)
 	result.ErrLog = make(chan error, 32)
+
+	result.ndh.ReserveEventListener(result.NdhEventCh)
+	result.ndh.ReserveErrorListener(result.ErrLog)
 
 	/////main worker/////
 
@@ -70,6 +77,20 @@ func CreateNetworker(pubkey_pem []byte, name string) (*Networker, error) {
 
 	accept_done := make(chan bool, 1)
 	new_session_ch := make(chan *Session, 32)
+	connect_fail_ch := make(chan ConnectFail, 32)
+
+	ConnectAsync := func(_address any) {
+		address, _ := _address.(atype.AbyssAddress)
+		go func() {
+			session, err := result.netcore.Connect(address)
+			if err != nil {
+				connect_fail_ch <- ConnectFail{address.Pubkey_hash, err}
+			} else {
+				new_session_ch <- session
+			}
+		}()
+	}
+	result.ndh.ReserveConnectCallback(ConnectAsync)
 
 	result.fin_wg.Add(1)
 	go func() { //Accepter
@@ -91,7 +112,6 @@ func CreateNetworker(pubkey_pem []byte, name string) (*Networker, error) {
 	result.fin_wg.Add(1)
 	go func() { //Peer query/connect handler
 		defer result.fin_wg.Done()
-		connect_fail_ch := make(chan ConnectFail, 32)
 		for {
 			select {
 			case query_call := <-result.callq:
@@ -169,27 +189,70 @@ func CreateNetworker(pubkey_pem []byte, name string) (*Networker, error) {
 					break
 				}
 
-				result.ndh_lock.Lock()
-
 				switch msg := ahmp_read.msg.(type) {
-				case AHMPDisconnect:
-					delete(result.peers, ahmp_read.peer.GetHash())
+				case AHMPExit:
 					ahmp_read.peer.Close()
+					delete(result.peers, ahmp_read.peer.GetHash())
+
+					result.ndh_lock.Lock()
+					result.ndh.Disconnected(ahmp_read.peer.GetHash())
+					result.ndh_lock.Unlock()
+
 					result.ErrRaise(msg.exitcode)
 				case AHMPRaw_ID:
+					result.ErrRaise(errors.New("duplicate AHMP ID"))
 				case AHMPRaw_JN:
+					result.ndh_lock.Lock()
+					result.ndh.OnJN(ahmp_read.peer, string(msg.path))
+					result.ndh_lock.Unlock()
 				case AHMPRaw_JOK:
+					world, err := ParseWorldJson(msg.world)
+					if err != nil {
+						ahmp_read.peer.Signal(err)
+						break
+					}
+
+					result.ndh_lock.Lock()
+					result.ndh.OnJOK(ahmp_read.peer, string(msg.path), world)
+					result.ndh_lock.Unlock()
 				case AHMPRaw_JDN:
+					result.ndh_lock.Lock()
+					result.ndh.OnJDN(ahmp_read.peer, string(msg.path), msg.status, string(msg.message))
+					result.ndh_lock.Unlock()
 				case AHMPRaw_JNI:
+					joiner_address, ok := atype.ParseAbyssAddress(string(msg.address))
+					if !ok {
+						ahmp_read.peer.Signal(errors.New("ahmp corrupted"))
+						break
+					}
+
+					result.ndh_lock.Lock()
+					result.ndh.OnJNI(ahmp_read.peer, string(msg.world_uuid), joiner_address, joiner_address.Pubkey_hash)
+					result.ndh_lock.Unlock()
 				case AHMPRaw_MEM:
+					result.ndh_lock.Lock()
+					result.ndh.OnMEM(ahmp_read.peer, string(msg.world_uuid))
+					result.ndh_lock.Unlock()
 				case AHMPRaw_SNB:
+					split := strings.Split(string(msg.members_hash), ",")
+
+					result.ndh_lock.Lock()
+					result.ndh.OnSNB(ahmp_read.peer, string(msg.world_uuid), split)
+					result.ndh_lock.Unlock()
 				case AHMPRaw_CRR:
+					result.ndh_lock.Lock()
+					result.ndh.OnCRR(ahmp_read.peer, string(msg.world_uuid), string(msg.missing_hash))
+					result.ndh_lock.Unlock()
 				case AHMPRaw_RST:
+					result.ndh_lock.Lock()
+					result.ndh.OnRST(ahmp_read.peer, string(msg.world_uuid))
+					result.ndh_lock.Unlock()
 				default:
 					result.ErrRaise(errors.New("unknown message type"))
 				}
 
 				result.ndh_lock.Unlock()
+
 			case <-accept_done:
 				//TODO: disconnect all
 				close(result.ErrLog)
@@ -221,4 +284,38 @@ func (n *Networker) GetPeerByHash(hash string) (*Peer, error) {
 
 	result := <-return_ch
 	return result.result, result.err
+}
+
+func (n *Networker) OpenWorld(path string, world *World) bool {
+	n.ndh_lock.Lock()
+	defer n.ndh_lock.Unlock()
+	return n.ndh.OpenWorld(path, world)
+}
+func (n *Networker) CloseWorld(path string) {
+	n.ndh_lock.Lock()
+	defer n.ndh_lock.Unlock()
+	n.ndh.CloseWorld(path)
+}
+func (n *Networker) ChangeWorldPath(prev_path string, new_path string) bool {
+	n.ndh_lock.Lock()
+	defer n.ndh_lock.Unlock()
+	return n.ndh.ChangeWorldPath(prev_path, new_path)
+}
+func (n *Networker) GetWorld(path string) (*World, bool) {
+	n.ndh_lock.Lock()
+	defer n.ndh_lock.Unlock()
+	world, ok := n.ndh.GetWorld(path)
+	result, _ := world.(*World)
+	return result, ok
+}
+
+func (n *Networker) JoinConnected(local_path string, peer *Peer, path string) {
+	n.ndh_lock.Lock()
+	defer n.ndh_lock.Unlock()
+	n.ndh.JoinConnected(local_path, peer, path)
+}
+func (n *Networker) JoinAny(local_path string, address any, peer_hash string, path string) {
+	n.ndh_lock.Lock()
+	defer n.ndh_lock.Unlock()
+	n.ndh.JoinAny(local_path, address, peer_hash, path)
 }
