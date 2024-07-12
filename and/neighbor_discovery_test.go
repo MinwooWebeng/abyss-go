@@ -123,6 +123,7 @@ func NewLocalHost() *LocalHost {
 	ndh.ReserveConnectCallback(func(address any) {
 		local_host.Log("connect")
 	})
+	ndh.ReserveSNBTimer(func(time.Duration, string) {})
 	event_ch := make(chan NeighborDiscoveryEvent, 1)
 	go func() {
 		for {

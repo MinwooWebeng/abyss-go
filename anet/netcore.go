@@ -6,8 +6,8 @@ import (
 
 type INetCore interface {
 	//blocking calls
-	Connect(atype.AbyssAddress) (*Session, error)
-	Accept() (*Session, error)
+	Connect(atype.AbyssAddress) (*Transmission, error)
+	Accept() (*Transmission, error)
 
 	LocalIdentity() atype.AbyssIdentity
 	LocalAddr() atype.AbyssAddress

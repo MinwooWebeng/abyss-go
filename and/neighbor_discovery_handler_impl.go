@@ -2,15 +2,20 @@ package and
 
 import (
 	"errors"
+	"time"
+
+	distuv_rand "golang.org/x/exp/rand"
+	"gonum.org/v1/gonum/stat/distuv"
 )
 
 type NeighborDiscoverySession struct {
 	world INeighborDiscoveryWorldBase
 
 	//key: identity hash
-	members     map[string]INeighborDiscoveryPeerBase //AC_MM, AC_PM(candidate sessions)
-	CC_MR       map[string]INeighborDiscoveryPeerBase
-	snb_targets map[string]int //decrement on SNB
+	members        map[string]INeighborDiscoveryPeerBase //AC_MM, AC_PM(candidate sessions)
+	CC_MR          map[string]INeighborDiscoveryPeerBase
+	snb_targets    map[string]int //decrement on SNB
+	is_snb_planned bool
 }
 
 type CandidateSession struct {
@@ -26,7 +31,9 @@ func NewCandidateSession() *CandidateSession {
 func NewNeighborDiscoverySession() *NeighborDiscoverySession {
 	result := new(NeighborDiscoverySession)
 	result.members = make(map[string]INeighborDiscoveryPeerBase)
+	result.CC_MR = make(map[string]INeighborDiscoveryPeerBase)
 	result.snb_targets = make(map[string]int)
+	result.is_snb_planned = false
 	return result
 }
 
@@ -34,6 +41,8 @@ type NeighborDiscoveryHandler struct {
 	event_listener   chan<- NeighborDiscoveryEvent
 	error_listener   chan<- error
 	connect_callback func(address any)
+	snb_timer        func(time.Duration, string)
+	snb_randsrc      distuv_rand.Source
 
 	local_hash string
 
@@ -49,6 +58,7 @@ type NeighborDiscoveryHandler struct {
 
 func NewNeighborDiscoveryHandler(local_hash string) *NeighborDiscoveryHandler {
 	result := new(NeighborDiscoveryHandler)
+	result.snb_randsrc = distuv_rand.NewSource(uint64(time.Now().UTC().UnixNano()))
 	result.local_hash = local_hash
 	result.peers = make(map[string]INeighborDiscoveryPeerBase)
 	result.worlds = make(map[string]INeighborDiscoveryWorldBase)
@@ -67,6 +77,14 @@ func (h *NeighborDiscoveryHandler) ReserveErrorListener(listener chan<- error) {
 }
 func (h *NeighborDiscoveryHandler) ReserveConnectCallback(connect_callback func(address any)) {
 	h.connect_callback = connect_callback
+}
+func (h *NeighborDiscoveryHandler) ReserveSNBTimer(snb_timer func(time.Duration, string)) {
+	h.snb_timer = snb_timer
+}
+func (h *NeighborDiscoveryHandler) SetSNBTimer(session *NeighborDiscoverySession) {
+	if !session.is_snb_planned {
+		h.snb_timer(time.Millisecond*time.Duration(distuv.Weibull{K: 0.72, Lambda: 800 * float64(len(session.members)+1), Src: h.snb_randsrc}.Rand()), session.world.GetUUID())
+	}
 }
 
 func (h *NeighborDiscoveryHandler) IsLocalPathOccupied(localpath string) bool {
@@ -179,9 +197,10 @@ func (h *NeighborDiscoveryHandler) Connected(peer INeighborDiscoveryPeerBase) {
 		_, ok := session.CC_MR[peer_id_hash]
 		if ok {
 			delete(session.CC_MR, peer_id_hash)
+			peer.SendMEM(session.world)
 			session.members[peer_id_hash] = peer
 			session.snb_targets[peer_id_hash] = 3
-			peer.SendMEM(session.world)
+			h.SetSNBTimer(session)
 			h.event_listener <- NeighborDiscoveryEvent{PeerJoin, "", peer.GetHash(), peer, "", session.world, 0, ""}
 		}
 	}
@@ -206,10 +225,8 @@ func (h *NeighborDiscoveryHandler) Disconnected(peer_hash string) {
 			h.event_listener <- NeighborDiscoveryEvent{PeerLeave, "", peer_hash, peer, "", session.world, 0, ""}
 		}
 
-		_, ok = session.CC_MR[peer_hash]
-		if ok {
-			delete(session.CC_MR, peer_hash)
-		}
+		delete(session.CC_MR, peer_hash)
+		delete(session.snb_targets, peer_hash)
 	}
 
 	//candidate sessions, remove silently.
@@ -317,7 +334,6 @@ func (h *NeighborDiscoveryHandler) OnJN(peer INeighborDiscoveryPeerBase, path st
 	}
 
 	session.members[peer.GetHash()] = peer
-	session.snb_targets[peer.GetHash()] = 3
 	peer.SendJOK(path, world)
 	h.event_listener <- NeighborDiscoveryEvent{PeerJoin, "", peer.GetHash(), peer, "", session.world, 0, ""}
 }
@@ -437,6 +453,7 @@ func (h *NeighborDiscoveryHandler) OnJNI(peer INeighborDiscoveryPeerBase, world_
 		joiner.SendMEM(session.world)
 		session.members[joiner_hash] = joiner
 		session.snb_targets[joiner_hash] = 3
+		h.SetSNBTimer(session)
 		return
 	}
 
@@ -473,7 +490,6 @@ func (h *NeighborDiscoveryHandler) OnMEM(peer INeighborDiscoveryPeerBase, world_
 	}
 
 	session.members[peer.GetHash()] = peer
-	session.snb_targets[peer.GetHash()] = 3
 	h.event_listener <- NeighborDiscoveryEvent{PeerJoin, "", peer.GetHash(), peer, "", session.world, 0, ""}
 }
 func (h *NeighborDiscoveryHandler) OnSNB(peer INeighborDiscoveryPeerBase, world_uuid string, members_hash []string) {
@@ -535,4 +551,25 @@ func (h *NeighborDiscoveryHandler) OnRST(peer INeighborDiscoveryPeerBase, world_
 func (h *NeighborDiscoveryHandler) OnWorldErr(peer INeighborDiscoveryPeerBase, world_uuid string) {
 	peer.SendRST(world_uuid)
 	h.OnRST(peer, world_uuid)
+}
+func (h *NeighborDiscoveryHandler) OnSNBTimeout(world_uuid string) {
+	session, ok := h.sessions[world_uuid]
+	if !ok {
+		return
+	}
+	defer func() { session.is_snb_planned = false }()
+
+	if len(session.snb_targets) == 0 {
+		return
+	}
+
+	snb_targets := make([]string, 0, len(session.snb_targets))
+	for k := range session.snb_targets {
+		snb_targets = append(snb_targets, k)
+	}
+	for _, member := range session.members {
+		member.SendSNB(session.world, snb_targets)
+	}
+
+	session.snb_targets = make(map[string]int)
 }

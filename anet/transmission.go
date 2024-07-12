@@ -7,7 +7,7 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-type Session struct {
+type Transmission struct {
 	connection  quic.Connection
 	ahmp_stream quic.Stream //host control message protocol
 	ahmp_parser AHMPParser
@@ -15,8 +15,8 @@ type Session struct {
 	address     atype.AbyssAddress
 }
 
-func NewSession(connection quic.Connection, ahmp_stream quic.Stream, ahmp_init_msg []byte) (*Session, error) {
-	result := new(Session)
+func NewTransmission(connection quic.Connection, ahmp_stream quic.Stream, ahmp_init_msg []byte) (*Transmission, error) {
+	result := new(Transmission)
 
 	result.connection = connection
 	result.ahmp_stream = ahmp_stream
@@ -46,6 +46,6 @@ func NewSession(connection quic.Connection, ahmp_stream quic.Stream, ahmp_init_m
 	return result, nil
 }
 
-func (s *Session) GetHash() string {
+func (s *Transmission) GetHash() string {
 	return s.identity.Hash
 }

@@ -3,6 +3,7 @@ package and
 import (
 	"strconv"
 	"strings"
+	"time"
 )
 
 type NeighborDiscoveryEventType int
@@ -16,20 +17,21 @@ const (
 )
 
 type NeighborDiscoveryEvent struct {
-	eventType NeighborDiscoveryEventType
-	localpath string                      //can be ""
-	peer_hash string                      //never be nil
-	peer      INeighborDiscoveryPeerBase  //can be nil
-	path      string                      //can be ""
-	world     INeighborDiscoveryWorldBase //can be nil
-	status    int
-	message   string
+	EventType NeighborDiscoveryEventType
+	Localpath string                      //can be ""
+	Peer_hash string                      //never be nil
+	Peer      INeighborDiscoveryPeerBase  //can be nil
+	Path      string                      //can be ""
+	World     INeighborDiscoveryWorldBase //can be nil
+	Status    int
+	Message   string
 }
 
 type INeighborDiscoveryHandler interface {
 	ReserveEventListener(listener chan<- NeighborDiscoveryEvent)
 	ReserveErrorListener(listener chan<- error)
 	ReserveConnectCallback(func(address any))
+	ReserveSNBTimer(func(time.Duration, string))
 
 	OpenWorld(path string, world INeighborDiscoveryWorldBase) bool
 	CloseWorld(path string)
@@ -49,12 +51,13 @@ type INeighborDiscoveryHandler interface {
 	OnCRR(peer INeighborDiscoveryPeerBase, world_uuid string, missing_member_hash string)
 	OnRST(peer INeighborDiscoveryPeerBase, world_uuid string)
 	OnWorldErr(peer INeighborDiscoveryPeerBase, world_uuid string)
+	OnSNBTimeout(world_uuid string)
 }
 
 // for testing purpose
 func (e *NeighborDiscoveryEvent) Stringify() string {
 	var sb strings.Builder
-	switch e.eventType {
+	switch e.EventType {
 	case JoinDenied:
 		sb.WriteString("JoinDenied ")
 	case JoinExpired:
@@ -66,20 +69,20 @@ func (e *NeighborDiscoveryEvent) Stringify() string {
 	case PeerLeave:
 		sb.WriteString("PeerLeave ")
 	}
-	sb.WriteString(e.localpath)
+	sb.WriteString(e.Localpath)
 	sb.WriteString(",")
-	sb.WriteString(e.peer_hash)
+	sb.WriteString(e.Peer_hash)
 	sb.WriteString(",")
-	sb.WriteString(e.path)
-	if e.world != nil {
+	sb.WriteString(e.Path)
+	if e.World != nil {
 		sb.WriteString(",")
-		sb.WriteString(e.world.GetUUID())
+		sb.WriteString(e.World.GetUUID())
 	}
-	if e.status != 0 {
+	if e.Status != 0 {
 		sb.WriteString(",")
-		sb.WriteString(strconv.Itoa(e.status))
+		sb.WriteString(strconv.Itoa(e.Status))
 		sb.WriteString(",")
-		sb.WriteString(e.message)
+		sb.WriteString(e.Message)
 	}
 	return sb.String()
 }

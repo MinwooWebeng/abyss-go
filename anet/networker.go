@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"time"
 )
 
 type PeerQueryReturn struct {
@@ -47,7 +48,7 @@ func (n *Networker) ErrRaise(err error) {
 	}
 }
 
-func CreateNetworker(pubkey_pem []byte, name string) (*Networker, error) {
+func NewNetworker(pubkey_pem []byte, name string) (*Networker, error) {
 	result := new(Networker)
 	id, err := atype.MakeAbyssIdentity(pubkey_pem, name)
 	if err != nil {
@@ -71,12 +72,20 @@ func CreateNetworker(pubkey_pem []byte, name string) (*Networker, error) {
 	result.ndh.ReserveEventListener(result.NdhEventCh)
 	result.ndh.ReserveErrorListener(result.ErrLog)
 
+	snb_timeout_ch := make(chan string, 16)
+	result.ndh.ReserveSNBTimer(func(duration time.Duration, world_uuid string) {
+		go func() {
+			time.Sleep(duration)
+			snb_timeout_ch <- world_uuid
+		}()
+	})
+
 	/////main worker/////
 
 	AHMP_channel := make(chan AHMPReadRes, 64)
 
 	accept_done := make(chan bool, 1)
-	new_session_ch := make(chan *Session, 32)
+	new_session_ch := make(chan *Transmission, 32)
 	connect_fail_ch := make(chan ConnectFail, 32)
 
 	ConnectAsync := func(_address any) {
@@ -113,8 +122,10 @@ func CreateNetworker(pubkey_pem []byte, name string) (*Networker, error) {
 	go func() { //Peer query/connect handler
 		defer result.fin_wg.Done()
 		for {
+			//fmt.Println("jj")
 			select {
 			case query_call := <-result.callq:
+				//fmt.Println("h")
 				var hash string
 				switch ct := query_call.arg.(type) {
 				case string:
@@ -153,6 +164,7 @@ func CreateNetworker(pubkey_pem []byte, name string) (*Networker, error) {
 					}()
 				}
 			case new_session := <-new_session_ch:
+				//fmt.Println("q")
 				peer, ok := result.peers[new_session.GetHash()]
 				if ok { //session already exists, duplicate connection
 					if !peer.TryAddSession(new_session) {
@@ -160,6 +172,7 @@ func CreateNetworker(pubkey_pem []byte, name string) (*Networker, error) {
 						result.ErrRaise(errors.New("triple session"))
 						new_session.connection.CloseWithError(409, "triple session")
 					}
+					break
 				}
 
 				//new peer
@@ -177,13 +190,16 @@ func CreateNetworker(pubkey_pem []byte, name string) (*Networker, error) {
 					}
 					delete(result.ongoing_dial, new_session.GetHash())
 				}
+				//fmt.Println("qe")
 			case conn_fail := <-connect_fail_ch:
+				//fmt.Println("i")
 				ret_list := result.ongoing_dial[conn_fail.hash]
 				for _, ret_ch := range ret_list {
 					ret_ch <- PeerQueryReturn{nil, conn_fail.err}
 				}
 				delete(result.ongoing_dial, conn_fail.hash)
 			case ahmp_read := <-AHMP_channel:
+				//fmt.Println("l")
 				if ahmp_read.err != nil {
 					result.ErrRaise(ahmp_read.err)
 					break
@@ -250,10 +266,12 @@ func CreateNetworker(pubkey_pem []byte, name string) (*Networker, error) {
 				default:
 					result.ErrRaise(errors.New("unknown message type"))
 				}
-
+			case world_uuid := <-snb_timeout_ch:
+				result.ndh_lock.Lock()
+				result.ndh.OnSNBTimeout(world_uuid)
 				result.ndh_lock.Unlock()
-
 			case <-accept_done:
+				//fmt.Println("a")
 				//TODO: disconnect all
 				close(result.ErrLog)
 				return

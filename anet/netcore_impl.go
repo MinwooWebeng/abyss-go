@@ -98,7 +98,7 @@ func NewGoQuicNetCore(local_identity atype.AbyssIdentity) (*GoQuicNetCore, error
 	return result, nil
 }
 
-func (n *GoQuicNetCore) Connect(abyss_address atype.AbyssAddress) (*Session, error) {
+func (n *GoQuicNetCore) Connect(abyss_address atype.AbyssAddress) (*Transmission, error) {
 	n.close_wg.Add(1)
 	defer n.close_wg.Done()
 	var err error
@@ -125,7 +125,7 @@ func (n *GoQuicNetCore) Connect(abyss_address atype.AbyssAddress) (*Session, err
 		}
 	}()
 
-	var new_peer *Session
+	var new_peer *Transmission
 	fin := make(chan error, 1)
 	go func() {
 		var err error
@@ -137,7 +137,7 @@ func (n *GoQuicNetCore) Connect(abyss_address atype.AbyssAddress) (*Session, err
 		if err != nil {
 			return
 		}
-		new_peer, err = NewSession(connection, ahmp_stream, n.ahmp_init_msg)
+		new_peer, err = NewTransmission(connection, ahmp_stream, n.ahmp_init_msg)
 		if err != nil {
 			return
 		}
@@ -159,7 +159,7 @@ func (n *GoQuicNetCore) Connect(abyss_address atype.AbyssAddress) (*Session, err
 		return nil, err
 	}
 }
-func (n *GoQuicNetCore) Accept() (*Session, error) {
+func (n *GoQuicNetCore) Accept() (*Transmission, error) {
 	n.close_wg.Add(1)
 	defer n.close_wg.Done()
 
@@ -175,7 +175,7 @@ func (n *GoQuicNetCore) Accept() (*Session, error) {
 		}
 	}()
 
-	var new_peer *Session
+	var new_peer *Transmission
 	fin := make(chan error, 1)
 	go func() {
 		var err error
@@ -187,7 +187,7 @@ func (n *GoQuicNetCore) Accept() (*Session, error) {
 		if err != nil {
 			return
 		}
-		new_peer, err = NewSession(connection, ahmp_stream, n.ahmp_init_msg)
+		new_peer, err = NewTransmission(connection, ahmp_stream, n.ahmp_init_msg)
 		if err != nil {
 			return
 		}

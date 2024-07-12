@@ -42,7 +42,7 @@ func TestNetCoreSimple(t *testing.T) {
 	}
 
 	nc2_perceived_hash := make(chan string, 1)
-	nc2_remchan := make(chan *Session, 1)
+	nc2_remchan := make(chan *Transmission, 1)
 	go_err := make(chan error, 1)
 	go func() {
 		nc2_remote, err := nc1.Accept()

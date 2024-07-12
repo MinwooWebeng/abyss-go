@@ -15,10 +15,10 @@ type AHMPReadRes struct {
 }
 
 type Peer struct {
-	primary_session   *Session
-	secondary_session *Session
+	primary_session   *Transmission
+	secondary_session *Transmission
 	AhmpCh            chan AHMPReadRes
-	is_ok             atomic.Bool //TODO: change into bool; on first toggle, raise error; peer close is called from networker
+	is_ok             atomic.Bool
 }
 
 // only this can be called externally for peer close. never call Close() directly.
@@ -28,7 +28,7 @@ func (p *Peer) Signal(err error) {
 	}
 }
 
-func (p *Peer) ServeSessionLoop(session *Session) {
+func (p *Peer) ServeSessionLoop(session *Transmission) {
 	for {
 		msg, err := session.ahmp_parser.Read(session.ahmp_stream)
 		if err != nil {
@@ -37,12 +37,12 @@ func (p *Peer) ServeSessionLoop(session *Session) {
 				p.Signal(err)
 				return //should be channel/connection closed (may need revision)
 			}
-			p.AhmpCh <- AHMPReadRes{p, msg, err}
 		}
+		p.AhmpCh <- AHMPReadRes{p, msg, err}
 	}
 }
 
-func NewPeer(session *Session, ahmp_ch chan AHMPReadRes) *Peer {
+func NewPeer(session *Transmission, ahmp_ch chan AHMPReadRes) *Peer {
 	result := new(Peer)
 	result.primary_session = session
 	result.AhmpCh = ahmp_ch
@@ -53,7 +53,7 @@ func NewPeer(session *Session, ahmp_ch chan AHMPReadRes) *Peer {
 	return result
 }
 
-func (p *Peer) TryAddSession(session *Session) bool {
+func (p *Peer) TryAddSession(session *Transmission) bool {
 	if p.primary_session.address != session.address {
 		return false
 	}
